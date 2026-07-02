@@ -1,0 +1,15 @@
+{
+  "esp32": {
+    "udp_port": 1234,
+    "baud_rate": 115200
+  },
+  "home_assistant": {
+    "mqtt_broker_ip": "192.168.x.xxx",
+    "mqtt_port": 1883,
+    "mqtt_user": "mqtt_user",
+    "mqtt_password": "mqtt_password"
+  },
+  "settings": {
+    "update_interval_seconds": 1.0
+  }
+}

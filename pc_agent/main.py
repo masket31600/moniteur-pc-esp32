@@ -5,6 +5,7 @@ import serial
 import serial.tools.list_ports
 import os
 import sys
+time.sleep(15) # Attend 15 secondes au démarrage
 
 # Import de nos propres modules
 import hardware
