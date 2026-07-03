@@ -8,6 +8,12 @@
     "mqtt_port": 1883,
     "mqtt_user": "mqtt_user",
     "mqtt_password": "mqtt_password"
+  "affichage": {
+    "couleur_cpu": "#00FF00",
+    "couleur_ram": "#0000FF",
+    "couleur_gpu": "#800080",
+    "couleur_alerte": "#FF0000",
+    "seuil_alerte": 80
   },
   "settings": {
     "update_interval_seconds": 1.0

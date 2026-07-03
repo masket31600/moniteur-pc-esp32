@@ -14,7 +14,10 @@ class HomeAssistantMQTT:
         self.device_name = "Moniteur PC"
         self.state_topic = f"{self.device_id}/state"
         
-        # NOUVEAU CATALOGUE DE CAPTEURS (Version 2 avec Énergie & Système)
+        # NOUVEAU : Canal de présence pour l'état en ligne/hors ligne
+        self.availability_topic = f"{self.device_id}/availability"
+        
+        # CATALOGUE DE CAPTEURS (Version 2)
         self.sensors = {
             "cpu_percent": {"name": "CPU Utilisation", "unit": "%", "icon": "mdi:cpu-64-bit"},
             "ram_percent": {"name": "RAM Utilisation", "unit": "%", "icon": "mdi:memory"},
@@ -32,6 +35,10 @@ class HomeAssistantMQTT:
         if self.user and self.password:
             self.client.username_pw_set(self.user, self.password)
 
+        # NOUVEAU : Déclaration du "Testament" (LWT) AVANT la connexion.
+        # Si le PC s'éteint ou perd le réseau, le broker MQTT publiera "offline" automatiquement.
+        self.client.will_set(self.availability_topic, payload="offline", retain=True)
+
     def connect(self):
         if not self.broker or self.broker == "192.168.1.X":
             print("MQTT ignoré (adresse IP non configurée).")
@@ -40,8 +47,12 @@ class HomeAssistantMQTT:
         try:
             self.client.connect(self.broker, self.port, 60)
             self.client.loop_start()
+            
+            # NOUVEAU : Dès que la connexion réussit, on signale qu'on est en ligne
+            self.client.publish(self.availability_topic, payload="online", retain=True)
+            
             self._publish_discovery()
-            print("Connexion MQTT réussie et Auto-Discovery envoyé (Version 2) !")
+            print("Connexion MQTT réussie, statut 'online' et Auto-Discovery envoyés !")
             return True
         except Exception as e:
             print(f"Erreur de connexion MQTT : {e}")
@@ -54,6 +65,10 @@ class HomeAssistantMQTT:
             payload = {
                 "name": sensor_info["name"],
                 "state_topic": self.state_topic,
+                # NOUVEAU : On indique à Home Assistant où surveiller le statut de présence
+                "availability_topic": self.availability_topic,
+                "payload_available": "online",
+                "payload_not_available": "offline",
                 "icon": sensor_info["icon"],
                 "value_template": f"{{{{ value_json.{sensor_id} }}}}",
                 "unique_id": f"{self.device_id}_{sensor_id}",
@@ -64,7 +79,6 @@ class HomeAssistantMQTT:
                 }
             }
             
-            # Ajout de l'unité de mesure uniquement si elle existe (pour éviter un espace vide sur l'Uptime)
             if sensor_info["unit"]:
                 payload["unit_of_measurement"] = sensor_info["unit"]
                 
