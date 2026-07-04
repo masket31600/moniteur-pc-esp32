@@ -82,26 +82,54 @@ def monitoring_loop():
     mqtt_client = HomeAssistantMQTT(ha_config)
     mqtt_client.connect()
 
+    # Variable pour maintenir la connexion série ouverte
+    ser = None
+
     while not stop_event.is_set():
         try:
             esp_port = get_esp_port()
             
+            # --- GESTION DE LA CONNEXION USB (Empêche le reset en boucle) ---
+            if esp_port:
+                if ser is None or ser.port != esp_port:
+                    if ser:
+                        ser.close()
+                    try:
+                        ser = serial.Serial(esp_port, baud_rate, timeout=1)
+                        # Désactiver les signaux DTR/RTS empêche certains ESP32 de redémarrer à chaque connexion
+                        ser.setDTR(False) 
+                        ser.setRTS(False)
+                        print(f"✅ Connecté à l'écran sur {esp_port}")
+                        time.sleep(1) # Laisse le temps à l'ESP de se réveiller
+                    except Exception as e:
+                        print(f"Erreur d'ouverture du port série: {e}")
+                        ser = None
+            else:
+                if ser:
+                    ser.close()
+                    ser = None
+            
             # --- INTERCEPTION : L'utilisateur a changé les réglages ---
             if force_config_send:
                 aff = config_data.get("affichage", {})
-                # Format de la trame : CONFIG:#CPU|#RAM|#GPU|#ALERTE|SEUIL\n
-                trame_config = f"CONFIG:{aff.get('couleur_cpu')}|{aff.get('couleur_ram')}|{aff.get('couleur_gpu')}|{aff.get('couleur_alerte')}|{aff.get('seuil_alerte')}\n"
+                esp = config_data.get("esp32", {})
                 
-                if esp_port:
+                # Format de la trame : CONFIG:#CPU|#RAM|#GPU|#ALERTE|SEUIL\n
+                trame_config = f"CONFIG:{aff.get('couleur_cpu', '#00FF00')}|{aff.get('couleur_ram', '#0000FF')}|{aff.get('couleur_gpu', '#800080')}|{aff.get('couleur_alerte', '#FF0000')}|{aff.get('seuil_alerte', 80)}\n"
+                trame_wifi = f"WIFI:{esp.get('ssid', '')}|{esp.get('password', '')}\n"
+                
+                if ser and ser.is_open:
                     try:
-                        with serial.Serial(esp_port, baud_rate, timeout=1) as ser:
-                            ser.write(trame_config.encode('utf-8'))
-                            print("Trame de config envoyée via USB")
+                        ser.write(trame_config.encode('utf-8'))
+                        time.sleep(0.1) # Petite pause pour laisser l'ESP souffler
+                        ser.write(trame_wifi.encode('utf-8'))
+                        print("Trames de config et Wi-Fi envoyées via USB")
                     except Exception as e: print(f"Erreur USB Config: {e}")
                 else:
                     try:
                         sock.sendto(trame_config.encode('utf-8'), ('<broadcast>', udp_port))
-                        print("Trame de config envoyée via UDP")
+                        sock.sendto(trame_wifi.encode('utf-8'), ('<broadcast>', udp_port))
+                        print("Trames de config et Wi-Fi envoyées via UDP")
                     except Exception as e: print(f"Erreur UDP Config: {e}")
                 
                 force_config_send = False # Trame envoyée, on désactive l'alarme
@@ -112,10 +140,9 @@ def monitoring_loop():
             mqtt_client.publish_metrics(metrics_dict)
             esp_trame = hardware.format_for_esp32(metrics_dict)
 
-            if esp_port:
+            if ser and ser.is_open:
                 try:
-                    with serial.Serial(esp_port, baud_rate, timeout=1) as ser:
-                        ser.write(esp_trame.encode('utf-8'))
+                    ser.write(esp_trame.encode('utf-8'))
                 except Exception: pass
             else:
                 try:
@@ -127,21 +154,31 @@ def monitoring_loop():
         except Exception as e:
             print(f"Erreur boucle principale : {e}")
             time.sleep(1)
+            
+    # Fermeture propre si on quitte l'appli
+    if ser:
+        ser.close()
 
 # ==========================================
 # THREAD 2 : L'INTERFACE (Systray & Tkinter)
 # ==========================================
-def open_config_window(icon, item):
+def show_interface():
     global config_data, force_config_send
     
     # Création de la fenêtre
     root = tk.Tk()
     root.title("Configuration de l'Écran")
-    root.geometry("320x350")
+    root.geometry("340x480")
     root.eval('tk::PlaceWindow . center') # Centre la fenêtre à l'écran
     root.configure(bg="#f0f0f0")
+    
+    # Met la fenêtre au premier plan à l'ouverture
+    root.attributes('-topmost', True)
+    root.update()
+    root.attributes('-topmost', False)
 
     aff = config_data.get("affichage", {})
+    esp = config_data.get("esp32", {})
     
     # Variables Tkinter pour stocker les choix
     c_cpu = tk.StringVar(value=aff.get("couleur_cpu", "#00FF00"))
@@ -149,9 +186,12 @@ def open_config_window(icon, item):
     c_gpu = tk.StringVar(value=aff.get("couleur_gpu", "#800080"))
     c_alert = tk.StringVar(value=aff.get("couleur_alerte", "#FF0000"))
     s_alert = tk.IntVar(value=aff.get("seuil_alerte", 80))
+    
+    v_ssid = tk.StringVar(value=esp.get("ssid", ""))
+    v_mdp = tk.StringVar(value=esp.get("password", ""))
 
     def pick_color(var, btn):
-        color = colorchooser.askcolor(initialcolor=var.get(), title="Choisir une couleur")[1]
+        color = colorchooser.askcolor(initialcolor=var.get(), title="Choisir une couleur", parent=root)[1]
         if color:
             var.set(color)
             btn.config(bg=color)
@@ -176,14 +216,31 @@ def open_config_window(icon, item):
     slider = tk.Scale(root, from_=50, to=100, orient="horizontal", variable=s_alert, bg="#f0f0f0", length=200)
     slider.pack()
 
+    tk.Label(root, text="Réseau Wi-Fi de l'écran", font=("Arial", 12, "bold"), bg="#f0f0f0").pack(pady=(15, 5))
+    
+    frame_ssid = tk.Frame(root, bg="#f0f0f0")
+    frame_ssid.pack(pady=2)
+    tk.Label(frame_ssid, text="SSID :", width=12, anchor="w", bg="#f0f0f0").pack(side="left")
+    tk.Entry(frame_ssid, textvariable=v_ssid, width=20).pack(side="left")
+
+    frame_mdp = tk.Frame(root, bg="#f0f0f0")
+    frame_mdp.pack(pady=2)
+    tk.Label(frame_mdp, text="Mot de passe :", width=12, anchor="w", bg="#f0f0f0").pack(side="left")
+    tk.Entry(frame_mdp, textvariable=v_mdp, show="*", width=20).pack(side="left")
+
     def on_save():
         global config_data, force_config_send
         # Mise à jour du dictionnaire en mémoire
+        config_data.setdefault("affichage", {})
         config_data["affichage"]["couleur_cpu"] = c_cpu.get()
         config_data["affichage"]["couleur_ram"] = c_ram.get()
         config_data["affichage"]["couleur_gpu"] = c_gpu.get()
         config_data["affichage"]["couleur_alerte"] = c_alert.get()
         config_data["affichage"]["seuil_alerte"] = s_alert.get()
+        
+        config_data.setdefault("esp32", {})
+        config_data["esp32"]["ssid"] = v_ssid.get().strip()
+        config_data["esp32"]["password"] = v_mdp.get().strip()
         
         save_config(config_data)
         force_config_send = True # Déclenche l'envoi à l'ESP32 dans le thread Moteur
@@ -191,8 +248,13 @@ def open_config_window(icon, item):
 
     tk.Button(root, text="Sauvegarder et Appliquer", command=on_save, bg="#4CAF50", fg="white", font=("Arial", 10, "bold")).pack(pady=20)
     
-    # Empêche l'application de crasher si on ouvre/ferme plusieurs fois
+    # Lancement de la boucle Tkinter dans ce thread séparé
     root.mainloop()
+
+def open_config_window(icon, item):
+    # On lance l'interface dans un processus à part pour ne pas bloquer le systray
+    t = threading.Thread(target=show_interface, daemon=True)
+    t.start()
 
 def quit_app(icon, item):
     stop_event.set() # Stoppe la boucle du moteur

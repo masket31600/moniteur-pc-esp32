@@ -1,0 +1,6 @@
+pyserial3.5
+pystray0.19.5
+Pillow10.2.0
+wmi1.5.1
+paho-mqtt1.6.1
+pywin32306
