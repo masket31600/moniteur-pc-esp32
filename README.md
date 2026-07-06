@@ -28,17 +28,15 @@ Câbles Dupont.
 
 Voici le câblage exact à respecter pour ce projet :
 
-_____________________________________
-|   Écran GC9A01   |    ESP32-C3    |
-|==================|================|
-| VCC              | 3V3            |
-| GND              | GND            |
-| RST              | GPIO 0         |
-| CS               | GPIO 1         |
-| DC               | GPIO 10        |
-| SDA (MOSI)       | GPIO 3         |
-| SCL (SCLK)       | GPIO 4         |
-|__________________|________________|
+| Écran GC9A01 | ESP32-C3 |
+| ------------ | -------- |
+| VCC          | 3V3      |
+| GND          | GND      |
+| RST          | GPIO 0   |
+| CS           | GPIO 1   |
+| DC           | GPIO 10  |
+| SDA (MOSI)   | GPIO 3   |
+| SCL (SCLK)   | GPIO 4   |
 
 
 🚀 Installation Rapide (Prêt à l'emploi)
