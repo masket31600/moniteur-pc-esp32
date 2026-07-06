@@ -3,8 +3,11 @@
   HUD ULTIMATE - ESP32-C3 SUPER MINI & ECRAN GC9A01 (240x240)
   =============================================================================
   Dépendances : 
-  1. TFT_eSPI (Bodmer) -> Configurer User_Setup.h pour GC9A01
+  1. TFT_eSPI (Bodmer) 
+     -> Sous PlatformIO : Définir les pins et le driver dans le platformio.ini (build_flags)
+     -> Sous Arduino IDE : Configurer le fichier User_Setup.h
 */
+
 
 #include <Arduino.h>
 #include <TFT_eSPI.h>
@@ -51,6 +54,17 @@ int seuil_alerte = 80;
 
 #define TFT_HUD_BG 0x0000 
 #define TFT_TRACK  0x10A2 
+
+// =========================================================================
+// PROTOTYPES DES FONCTIONS (Requis pour PlatformIO / C++ strict)
+// =========================================================================
+void fastConnectWiFi();
+void processData(String data);
+void drawStatusScreen();
+void drawReactorBackground();
+void drawGauges();
+void drawCenterData();
+void drawLegend();
 
 // Convertisseur Hex vers RGB565 pour lire la configuration du PC
 uint16_t hexToRGB565(String hex) {
