@@ -62,7 +62,8 @@ uint16_t hexToRGB565(String hex) {
 // RÉSEAU ET INITIALISATION
 // =========================================================================
 
-void connectWiFi() {
+// Fonction de reconnexion rapide (utilisée quand on change de WiFi depuis le PC en plein vol)
+void fastConnectWiFi() {
     if (ssid == "" || ssid.length() == 0) {
         tft.setTextColor(TFT_ORANGE, TFT_HUD_BG);
         tft.drawCentreString("Wi-Fi Not Configured", 120, 110, 2);
@@ -114,7 +115,7 @@ void processData(String data) {
             preferences.putString("pwd", password);
             WiFi.disconnect();
             tft.fillScreen(TFT_HUD_BG);
-            connectWiFi();
+            fastConnectWiFi();
         }
         return;
     }
@@ -153,7 +154,7 @@ void processData(String data) {
 }
 
 // =========================================================================
-// SETUP - SÉQUENCE DE BOOT
+// SETUP - SÉQUENCE DE BOOT RÉALISTE (15 SECONDES STRICTES)
 // =========================================================================
 
 void setup() {
@@ -162,17 +163,18 @@ void setup() {
     tft.setRotation(0);
     tft.fillScreen(TFT_HUD_BG);
     
-    // Séquence de Boot visuelle
+    // 1. BIOS & Init
+    tft.setTextColor(TFT_CYAN, TFT_HUD_BG);
+    tft.drawString("BIOS_v2.4 (c) 2026", 10, 20, 2);
+    delay(500);
     tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
-    tft.drawString("BIOS_v2.4 (c)", 10, 30, 2);
-    delay(400);
-    tft.drawString("> ESP32 INIT", 10, 50, 1);
-    delay(200);
-    tft.drawString("> MOUNTING TFT...", 10, 65, 1);
-    delay(200);
+    tft.drawString("> ESP32-C3_SUPERMINI INIT", 10, 45, 1);
+    delay(500);
+    tft.drawString("> MOUNTING SPI_TFT... [OK]", 10, 58, 1);
+    delay(500);
 
-    // Chargement EEPROM
-    tft.drawString("> LOADING EEPROM...", 10, 80, 1);
+    // 2. Chargement EEPROM
+    tft.drawString("> LOADING EEPROM... [OK]", 10, 71, 1);
     preferences.begin("moniteur", false);
     color_cpu = preferences.getUShort("color_cpu", TFT_GREEN);
     color_ram = preferences.getUShort("color_ram", TFT_BLUE);
@@ -181,54 +183,74 @@ void setup() {
     seuil_alerte = preferences.getInt("alert_thresh", 80);
     ssid = preferences.getString("ssid", "");
     password = preferences.getString("pwd", "");
+    delay(500);
 
-    delay(400);
+    // 3. Connexion Wi-Fi Réaliste
+    tft.drawString("> CONNECTING WIFI...", 10, 84, 1);
+    delay(300);
+    tft.setTextColor(tft.color565(150, 150, 150), TFT_HUD_BG); // Gris pour les sous-infos
+    tft.drawString("  SSID: " + (ssid == "" ? "N/A" : ssid), 10, 97, 1);
+    delay(300);
+    tft.drawString("  PASS: ************", 10, 110, 1);
 
-    connectWiFi();
-    
-    // Initialisation du Sprite en RAM
-    tft.fillScreen(TFT_HUD_BG);
+    if (ssid != "") {
+        WiFi.begin(ssid.c_str(), password.c_str());
+        int attempts = 0;
+        // On attend la connexion, mais on ne bloque pas indéfiniment
+        while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+            delay(500);
+            attempts++;
+        }
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        tft.drawString("  IP: " + WiFi.localIP().toString(), 10, 123, 1);
+        delay(300);
+        tft.setTextColor(TFT_CYAN, TFT_HUD_BG);
+        tft.drawString("> WIFI ESTABLISHED !", 10, 136, 1);
+    } else {
+        tft.drawString("  IP: OFFLINE", 10, 123, 1);
+        delay(300);
+        tft.setTextColor(TFT_RED, TFT_HUD_BG);
+        tft.drawString("> WIFI FAILED (USB MODE)", 10, 136, 1);
+    }
+    delay(500);
+
+    // 4. Initialisation UDP & Série
     tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
-    tft.drawString("> ALLOCATING VRAM...", 10, 30, 1);
+    tft.drawString("> INIT UDP/USB LISTENER...", 10, 149, 1);
+    delay(300);
+    if (WiFi.status() == WL_CONNECTED) udp.begin(localUdpPort);
+    tft.setTextColor(tft.color565(150, 150, 150), TFT_HUD_BG);
+    tft.drawString("  PORT: 1234 [OK]", 10, 162, 1);
+    delay(500);
+    
+    // 5. Allocation VRAM (Sprite)
+    tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
+    tft.drawString("> ALLOCATING 115KB VRAM...", 10, 175, 1);
     spr.createSprite(240, 240);
     spr.setTextDatum(MC_DATUM);
+    delay(500);
     
-    tft.drawString("> WAITING FOR PC AGENT...", 10, 50, 1);
+    tft.drawString("> WAITING FOR PC AGENT", 10, 188, 1);
 
     // --- GARANTIE DES 15 SECONDES DE BOOT ---
-    // Cette boucle tournera jusqu'à ce que 15000 millisecondes (15s) se soient écoulées
-    // depuis l'allumage électrique de l'ESP32.
+    // Cette boucle absorbe le temps restant jusqu'à 14 secondes exactement
     int dotCount = 0;
-    int yPos = 70;
-    
-    while (millis() < 15000) {
-        // Animation des 3 petits points
+    while (millis() < 14000) { 
         String dots = "";
         for (int i = 0; i < (dotCount % 4); i++) dots += ".";
-        tft.fillRect(160, 50, 40, 15, TFT_HUD_BG); // Efface les anciens points
-        tft.drawString(dots, 160, 50, 1);
-
-        // Effet Terminal Hackerman en cascade
-        tft.setTextColor(tft.color565(0, random(100, 255), 0), TFT_HUD_BG);
-        tft.drawString("SCAN_PORT: 0x" + String(random(0x1000, 0xFFFF), HEX), 10, yPos, 1);
-        
-        yPos += 15;
-        if (yPos > 220) {
-            yPos = 70;
-            tft.fillRect(0, 70, 240, 160, TFT_HUD_BG); // Nettoie le terminal pour recommencer
-        }
-
+        tft.fillRect(150, 188, 40, 15, TFT_HUD_BG); // Nettoie les anciens points
+        tft.drawString(dots, 150, 188, 1);
         dotCount++;
-        delay(150);
+        delay(300);
     }
     
-    // Conclusion de l'animation de boot
-    tft.fillRect(0, 70, 240, 160, TFT_HUD_BG); // Efface le faux terminal
-    tft.setTextColor(TFT_CYAN, TFT_HUD_BG);
-    tft.drawString("> SYS_LINK ESTABLISHED !", 10, 80, 1);
-    delay(1000); // Pause dramatique d'une seconde
+    // Conclusion
+    tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
+    tft.drawString("> SYS_LINK ESTABLISHED !", 10, 201, 1);
+    delay(1000); // On arrive à 15 secondes parfaites !
     
-    // On laisse l'écran afficher le HUD vide pendant 3 secondes minimum avant de crier à la déconnexion
     statusScreenActive = false;
     lastDataTime = millis(); 
 }
