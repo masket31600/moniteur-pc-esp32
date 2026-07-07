@@ -436,6 +436,5 @@ void drawLegend() {
     spr.setTextColor(color_cpu, TFT_HUD_BG);
     spr.drawString("CPU", 95, 204, 1);
     spr.drawNumber((int)currentCpu, 135, 204, 1);
-    spr.drawString("%", 155, 204, 1);
-    
+    spr.drawString("%", 155, 204, 1);    
 }
