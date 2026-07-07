@@ -89,18 +89,26 @@ def monitoring_loop():
         try:
             esp_port = get_esp_port()
             
-            # --- GESTION DE LA CONNEXION USB (Empêche le reset en boucle) ---
+# --- GESTION DE LA CONNEXION USB (Empêche le reset en boucle) ---
             if esp_port:
                 if ser is None or ser.port != esp_port:
                     if ser:
                         ser.close()
                     try:
-                        ser = serial.Serial(esp_port, baud_rate, timeout=1)
-                        # Désactiver les signaux DTR/RTS empêche certains ESP32 de redémarrer à chaque connexion
-                        ser.setDTR(False) 
-                        ser.setRTS(False)
+                        # 1. On crée l'objet série SANS définir le port pour ne pas l'ouvrir de force
+                        ser = serial.Serial()
+                        ser.port = esp_port
+                        ser.baudrate = baud_rate
+                        ser.timeout = 1
+                        
+                        # 2. On coupe les signaux de redémarrage AVANT l'ouverture
+                        ser.dtr = False
+                        ser.rts = False
+                        
+                        # 3. On ouvre enfin le port de manière silencieuse
+                        ser.open()
+                        
                         print(f"✅ Connecté à l'écran sur {esp_port}")
-                        time.sleep(1) # Laisse le temps à l'ESP de se réveiller
                     except Exception as e:
                         print(f"Erreur d'ouverture du port série: {e}")
                         ser = None
