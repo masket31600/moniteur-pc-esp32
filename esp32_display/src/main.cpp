@@ -8,7 +8,6 @@
      -> Sous Arduino IDE : Configurer le fichier User_Setup.h
 */
 
-
 #include <Arduino.h>
 #include <TFT_eSPI.h>
 #include <Preferences.h>
@@ -22,14 +21,16 @@ Preferences preferences;
 WiFiUDP udp;
 
 // --- CONFIGURATION ANGLES ---
-// 0 étant le bas de l'écran, un arc de 60 à 300 degrés laisse une ouverture parfaite en bas
 const int START_ANGLE = 60; 
 const int SWEEP_ANGLE = 240; // De 60 à 300 = 240 degrés de jauge
 
 // --- MÉMOIRES ET TIMEOUT ---
 unsigned long lastDataTime = 0;
 bool statusScreenActive = true;
-const unsigned long TIMEOUT_MS = 3000;
+bool isSleeping = false; 
+
+const unsigned long TIMEOUT_MS = 3000;       // 3 secondes sans données = Radar Orange
+const unsigned long SLEEP_TIMEOUT_MS = 60000; // 60 secondes sans données = Extinction écran (1 minute)
 
 // --- RÉSEAU ---
 String ssid = "";
@@ -43,7 +44,6 @@ int cpuTemp = 0, gpuTemp = 0;
 
 // --- VARIABLES D'ANIMATION (Easing fluide) ---
 float currentCpu = 0, currentGpu = 0, currentRam = 0; 
-float reactorAngle = 0;
 
 // --- COULEURS DYNAMIQUES (Configurables) ---
 uint16_t color_cpu = TFT_GREEN;
@@ -56,12 +56,12 @@ int seuil_alerte = 80;
 #define TFT_TRACK  0x10A2 
 
 // =========================================================================
-// PROTOTYPES DES FONCTIONS (Requis pour PlatformIO / C++ strict)
+// PROTOTYPES DES FONCTIONS
 // =========================================================================
+void runBootSequence(bool hardwareInit);
 void fastConnectWiFi();
 void processData(String data);
 void drawStatusScreen();
-void drawReactorBackground();
 void drawGauges();
 void drawCenterData();
 void drawLegend();
@@ -76,7 +76,6 @@ uint16_t hexToRGB565(String hex) {
 // RÉSEAU ET INITIALISATION
 // =========================================================================
 
-// Fonction de reconnexion rapide (utilisée quand on change de WiFi depuis le PC en plein vol)
 void fastConnectWiFi() {
     if (ssid == "" || ssid.length() == 0) {
         tft.setTextColor(TFT_ORANGE, TFT_HUD_BG);
@@ -157,7 +156,7 @@ void processData(String data) {
         return;
     }
     
-    // --- Données Capteurs (Format: C:45|R:60|G:85|Tc:70|Tg:65) ---
+    // --- Données Capteurs ---
     if (data.indexOf("C:") == -1 || data.indexOf("Tc:") == -1) return;
 
     targetCpu = data.substring(data.indexOf("C:")+2, data.indexOf("|", data.indexOf("C:"))).toInt();
@@ -168,93 +167,98 @@ void processData(String data) {
 }
 
 // =========================================================================
-// SETUP - SÉQUENCE DE BOOT RÉALISTE (15 SECONDES STRICTES)
+// SÉQUENCE D'ANIMATION (UTILISÉE AU BOOT ET AU RÉVEIL)
 // =========================================================================
 
-void setup() {
-    Serial.begin(115200);
-    tft.init();
-    tft.setRotation(0);
+void runBootSequence(bool hardwareInit) {
     tft.fillScreen(TFT_HUD_BG);
+    unsigned long animStartTime = millis();
     
     // 1. BIOS & Init
     tft.setTextColor(TFT_CYAN, TFT_HUD_BG);
     tft.drawString("BIOS_v2.4 (c) 2026", 10, 20, 2);
-    delay(500);
+    delay(hardwareInit ? 500 : 150); 
+    
     tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
-    tft.drawString("> ESP32-C3_SUPERMINI INIT", 10, 45, 1);
-    delay(500);
+    tft.drawString(hardwareInit ? "> ESP32-C3_SUPERMINI INIT" : "> SYSTEM WAKE UP...", 10, 45, 1);
+    delay(hardwareInit ? 500 : 150);
     tft.drawString("> MOUNTING SPI_TFT... [OK]", 10, 58, 1);
-    delay(500);
+    delay(hardwareInit ? 500 : 150);
 
     // 2. Chargement EEPROM
     tft.drawString("> LOADING EEPROM... [OK]", 10, 71, 1);
-    preferences.begin("moniteur", false);
-    color_cpu = preferences.getUShort("color_cpu", TFT_GREEN);
-    color_ram = preferences.getUShort("color_ram", TFT_BLUE);
-    color_gpu = preferences.getUShort("color_gpu", TFT_MAGENTA);
-    color_alerte = preferences.getUShort("color_alert", TFT_RED);
-    seuil_alerte = preferences.getInt("alert_thresh", 80);
-    ssid = preferences.getString("ssid", "");
-    password = preferences.getString("pwd", "");
-    delay(500);
+    if (hardwareInit) {
+        preferences.begin("moniteur", false);
+        color_cpu = preferences.getUShort("color_cpu", TFT_GREEN);
+        color_ram = preferences.getUShort("color_ram", TFT_BLUE);
+        color_gpu = preferences.getUShort("color_gpu", TFT_MAGENTA);
+        color_alerte = preferences.getUShort("color_alert", TFT_RED);
+        seuil_alerte = preferences.getInt("alert_thresh", 80);
+        ssid = preferences.getString("ssid", "");
+        password = preferences.getString("pwd", "");
+    }
+    delay(hardwareInit ? 500 : 150);
 
     // 3. Connexion Wi-Fi Réaliste
     tft.drawString("> CONNECTING WIFI...", 10, 84, 1);
-    delay(300);
-    tft.setTextColor(tft.color565(150, 150, 150), TFT_HUD_BG); // Gris pour les sous-infos
+    delay(200);
+    tft.setTextColor(tft.color565(150, 150, 150), TFT_HUD_BG);
     tft.drawString("  SSID: " + (ssid == "" ? "N/A" : ssid), 10, 97, 1);
-    delay(300);
+    delay(200);
     tft.drawString("  PASS: ************", 10, 110, 1);
 
-    if (ssid != "") {
+    if (hardwareInit && ssid != "") {
         WiFi.begin(ssid.c_str(), password.c_str());
         int attempts = 0;
-        // On attend la connexion, mais on ne bloque pas indéfiniment
         while (WiFi.status() != WL_CONNECTED && attempts < 15) {
             delay(500);
             attempts++;
         }
+    } else if (!hardwareInit) {
+        delay(300); 
     }
 
     if (WiFi.status() == WL_CONNECTED) {
         tft.drawString("  IP: " + WiFi.localIP().toString(), 10, 123, 1);
-        delay(300);
+        delay(200);
         tft.setTextColor(TFT_CYAN, TFT_HUD_BG);
         tft.drawString("> WIFI ESTABLISHED !", 10, 136, 1);
     } else {
         tft.drawString("  IP: OFFLINE", 10, 123, 1);
-        delay(300);
+        delay(200);
         tft.setTextColor(TFT_RED, TFT_HUD_BG);
         tft.drawString("> WIFI FAILED (USB MODE)", 10, 136, 1);
     }
-    delay(500);
+    delay(hardwareInit ? 500 : 150);
 
     // 4. Initialisation UDP & Série
     tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
     tft.drawString("> INIT UDP/USB LISTENER...", 10, 149, 1);
-    delay(300);
-    if (WiFi.status() == WL_CONNECTED) udp.begin(localUdpPort);
+    delay(200);
+    if (hardwareInit && WiFi.status() == WL_CONNECTED) udp.begin(localUdpPort);
     tft.setTextColor(tft.color565(150, 150, 150), TFT_HUD_BG);
     tft.drawString("  PORT: COM [OK]", 10, 162, 1);
-    delay(500);
+    delay(hardwareInit ? 500 : 150);
     
-    // 5. Allocation VRAM (Sprite)
+    // 5. Allocation VRAM
     tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
     tft.drawString("> ALLOCATING 115KB VRAM...", 10, 175, 1);
-    spr.createSprite(240, 240);
-    spr.setTextDatum(MC_DATUM);
-    delay(500);
+    if (hardwareInit) {
+        spr.createSprite(240, 240);
+        spr.setTextDatum(MC_DATUM);
+    }
+    delay(hardwareInit ? 500 : 150);
     
     tft.drawString("> WAITING FOR PC AGENT", 10, 188, 1);
 
-    // --- GARANTIE DES 15 SECONDES DE BOOT ---
-    // Cette boucle absorbe le temps restant jusqu'à 14 secondes exactement
+    // --- ABSORPTION DU TEMPS ---
+    unsigned long targetDuration = hardwareInit ? 14000 : 3000;
     int dotCount = 0;
-    while (millis() < 14000) { 
+    
+    while (millis() - animStartTime < targetDuration) { 
         String dots = "";
         for (int i = 0; i < (dotCount % 4); i++) dots += ".";
-        tft.fillRect(150, 188, 40, 15, TFT_HUD_BG); // Nettoie les anciens points
+        tft.fillRect(150, 188, 40, 15, TFT_HUD_BG); 
         tft.drawString(dots, 150, 188, 1);
         dotCount++;
         delay(300);
@@ -263,54 +267,91 @@ void setup() {
     // Conclusion
     tft.setTextColor(TFT_GREEN, TFT_HUD_BG);
     tft.drawString("> SYS_LINK ESTABLISHED !", 10, 201, 1);
-    delay(1000); // On arrive à 15 secondes parfaites !
+    delay(1000); 
     
+    tft.fillScreen(TFT_HUD_BG); 
     statusScreenActive = false;
     lastDataTime = millis(); 
 }
 
 // =========================================================================
-// BOUCLE PRINCIPALE ET DESSIN SPRITE
+// SETUP PRINCIPAL
+// =========================================================================
+
+void setup() {
+    Serial.begin(115200);
+    tft.init();
+    tft.setRotation(0);
+    
+    runBootSequence(true); 
+}
+
+// =========================================================================
+// BOUCLE PRINCIPALE
 // =========================================================================
 
 void loop() {
-    // 1. LECTURE DONNÉES
+    bool dataReceivedThisLoop = false;
+
+    // 1. LECTURE DONNÉES SÉRIE
     if (Serial.available()) {
         processData(Serial.readStringUntil('\n'));
+        dataReceivedThisLoop = true;
     }
     
+    // 2. LECTURE DONNÉES WIFI (UDP)
     if (WiFi.status() == WL_CONNECTED) {
         int packetSize = udp.parsePacket();
         if (packetSize) {
             int len = udp.read(incomingPacket, 255);
             if (len > 0) incomingPacket[len] = 0;
             processData(String(incomingPacket));
+            dataReceivedThisLoop = true;
         }
     }
-    
-    // 2. TIMEOUT
-    if (millis() - lastDataTime > TIMEOUT_MS) {
+
+    // 3. GESTION DU RÉVEIL
+    if (dataReceivedThisLoop && isSleeping) {
+        tft.writecommand(0x11); // Sortie de veille
+        delay(120);             // Stabilisation LCD
+        runBootSequence(false); // Animation allégée
+        isSleeping = false;
+        statusScreenActive = false;
+    }
+
+    // 4. TIMEOUT & GESTION DU SOMMEIL
+    unsigned long idleTime = millis() - lastDataTime;
+
+    if (idleTime > SLEEP_TIMEOUT_MS && !isSleeping) {
+        tft.writecommand(0x10); // Mise en veille de la dalle
+        isSleeping = true;
+    } 
+    else if (idleTime > TIMEOUT_MS && idleTime <= SLEEP_TIMEOUT_MS && !statusScreenActive) {
         statusScreenActive = true;
     }
 
-    // 3. MOTEUR PHYSIQUE (EASING)
+    if (isSleeping) {
+        delay(100); 
+        return; 
+    }
+
+    // 5. MOTEUR PHYSIQUE (EASING)
     currentCpu += (targetCpu - currentCpu) * 0.1;
     currentGpu += (targetGpu - currentGpu) * 0.1;
     currentRam += (targetRam - currentRam) * 0.1;
 
-    // 4. RENDU DANS LA RAM (SPRITE)
+    // 6. RENDU DANS LA RAM (SPRITE)
     spr.fillSprite(TFT_HUD_BG);
     
     if (statusScreenActive) {
         drawStatusScreen();
     } else {
-        drawReactorBackground();
         drawGauges();
         drawCenterData();
         drawLegend();
     }
 
-    // 5. AFFICHAGE A L'ECRAN (Zéro scintillement)
+    // 7. AFFICHAGE A L'ECRAN
     spr.pushSprite(0, 0); 
 }
 
@@ -335,22 +376,8 @@ void drawStatusScreen() {
     spr.setTextColor(TFT_RED, TFT_HUD_BG);
     spr.drawString("Monitoring = Standby", 120, 150, 2);
     
-    // Petit radar en attente
     float t = millis() / 500.0;
     spr.drawCircle(120, 190, 10 + 5 * sin(t), TFT_ORANGE);
-}
-
-void drawReactorBackground() {
-    float avgLoad = (currentCpu + currentGpu) / 2.0;
-    float rotationSpeed = 0.5 + (avgLoad / 40.0);
-    reactorAngle += rotationSpeed;
-    if (reactorAngle > 360) reactorAngle -= 360;
-
-    for(int i = 0; i < 3; i++) {
-        int a1 = reactorAngle + (i * 120);
-        int a2 = a1 + 60;
-        spr.drawSmoothArc(120, 120, 58, 56, a1, a2, color_cpu, TFT_HUD_BG, false);
-    }
 }
 
 void drawGauges() {
@@ -361,7 +388,6 @@ void drawGauges() {
     int endRam = START_ANGLE + (currentRam / 100.0) * SWEEP_ANGLE;
     int endGpu = START_ANGLE + (currentGpu / 100.0) * SWEEP_ANGLE;
 
-    // Détermination des couleurs (Alerte si Temp OR Charge élevée)
     bool alertCpu = (cpuTemp >= seuil_alerte || currentCpu >= seuil_alerte) && (millis() / 200) % 2 == 0;
     bool alertGpu = (gpuTemp >= seuil_alerte || currentGpu >= seuil_alerte) && (millis() / 200) % 2 == 0;
     
@@ -373,8 +399,7 @@ void drawGauges() {
     spr.drawSmoothArc(120, 120, rRam, rRam - w, START_ANGLE, START_ANGLE + SWEEP_ANGLE, TFT_TRACK, TFT_HUD_BG, false);
     spr.drawSmoothArc(120, 120, rGpu, rGpu - w, START_ANGLE, START_ANGLE + SWEEP_ANGLE, TFT_TRACK, TFT_HUD_BG, false);
 
-    // Valeurs
-// Valeurs (On ne dessine que si la jauge est > 1%)
+    // Valeurs 
     if (currentCpu > 1.0) spr.drawSmoothArc(120, 120, rCpu, rCpu - w, START_ANGLE, endCpu, cCpu, TFT_HUD_BG, false);
     if (currentRam > 1.0) spr.drawSmoothArc(120, 120, rRam, rRam - w, START_ANGLE, endRam, color_ram, TFT_HUD_BG, false);
     if (currentGpu > 1.0) spr.drawSmoothArc(120, 120, rGpu, rGpu - w, START_ANGLE, endGpu, cGpu, TFT_HUD_BG, false);
@@ -422,7 +447,6 @@ void drawCenterData() {
 }
 
 void drawLegend() {
-    // La légende en bas (L'espace vide est désormais en haut, on compacte la légende au milieu/bas)
     spr.setTextColor(color_gpu, TFT_HUD_BG);
     spr.drawString("GPU", 95, 180, 1);
     spr.drawNumber((int)currentGpu, 135, 180, 1);
