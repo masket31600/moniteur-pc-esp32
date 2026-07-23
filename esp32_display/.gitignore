@@ -4,3 +4,5 @@
 .vscode/launch.json
 .vscode/ipch
 FIRMAWE_UNIQUE.bin
+.vscode
+moniteur-pc-esp32.code-workspace

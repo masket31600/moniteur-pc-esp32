@@ -166,6 +166,7 @@ def monitoring_loop():
     # Fermeture propre si on quitte l'appli
     if ser:
         ser.close()
+    mqtt_client.disconnect()
 
 # ==========================================
 # THREAD 2 : L'INTERFACE (Systray & Tkinter)
